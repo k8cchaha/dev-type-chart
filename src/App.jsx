@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { PieChart, Pie, Cell, Tooltip } from 'recharts'
-import { JIRA_EMAIL, JIRA_API_TOKEN } from './config'
+const JIRA_EMAIL     = import.meta.env.VITE_JIRA_EMAIL
+const JIRA_API_TOKEN = import.meta.env.VITE_JIRA_API_TOKEN
 
 const OP_TYPES = new Set(['OP-Bug', 'OP-Task'])
 

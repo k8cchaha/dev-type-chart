@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/jira/:path*",
+      "destination": "https://kkvideo.atlassian.net/:path*"
+    }
+  ]
+}
