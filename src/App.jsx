@@ -182,7 +182,7 @@ export default function App() {
               id="username"
               className="search-input"
               type="text"
-              placeholder="e.g. John Doe"
+              placeholder="e.g. Tony Stark"
               value={username}
               onChange={e => { setUsername(e.target.value); setCandidates([]) }}
               onKeyDown={e => e.key === 'Enter' && search()}
