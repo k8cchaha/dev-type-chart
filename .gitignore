@@ -1,0 +1,5 @@
+node_modules/
+dist/
+
+# 包含 API Token，不進版控
+src/config.js
