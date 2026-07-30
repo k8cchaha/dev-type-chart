@@ -89,7 +89,8 @@ async function fetchTasksForUser({ accountId, displayName }, days) {
 
 export default function App() {
   const [username, setUsername] = useState('')
-  const [days, setDays] = useState(30)
+  const [daysInput, setDaysInput] = useState('30')
+  const days = Math.max(1, parseInt(daysInput) || 30)
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
@@ -168,10 +169,10 @@ export default function App() {
               <input
                 type="number"
                 className="days-input"
-                value={days}
+                value={daysInput}
                 min={1}
-                max={365}
-                onChange={e => setDays(Math.max(1, parseInt(e.target.value) || 30))}
+                onChange={e => setDaysInput(e.target.value)}
+                onBlur={() => setDaysInput(String(Math.max(1, parseInt(daysInput) || 30)))}
               />
               天
             </span>
