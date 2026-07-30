@@ -156,7 +156,7 @@ export default function App() {
     <div className="app">
       <header className="header">
         <h1>Dev Type 分析</h1>
-        <p>查看成員近 30 天完成 DEV-Task 的 Operation 比例</p>
+        <p>查看成員近期完成 DEV-Task 的 Operation 比例</p>
       </header>
 
       <main className="main">
