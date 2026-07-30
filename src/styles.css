@@ -90,12 +90,39 @@ body {
   padding: 1.25rem;
   margin-bottom: 1.25rem;
 }
+.search-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: .5rem;
+}
 .search-label {
-  display: block;
   font-size: .8125rem;
   font-weight: 500;
   color: var(--text-2);
-  margin-bottom: .5rem;
+}
+.days-picker {
+  display: flex;
+  align-items: center;
+  gap: .3rem;
+  font-size: .8125rem;
+  color: var(--text-2);
+}
+.days-input {
+  width: 3.25rem;
+  height: 1.625rem;
+  padding: 0 .25rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: .8125rem;
+  background: var(--surface-1);
+  color: var(--text-1);
+  text-align: center;
+  outline: none;
+}
+.days-input:focus {
+  border-color: var(--other);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--other) 15%, transparent);
 }
 .search-row {
   display: flex;

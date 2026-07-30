@@ -54,10 +54,10 @@ async function searchUsers(query) {
   return exact.length > 0 ? exact : active
 }
 
-async function fetchTasksForUser({ accountId, displayName }) {
+async function fetchTasksForUser({ accountId, displayName }, days) {
   const fieldId = await getDevTypeFieldId()
 
-  const jql = `issueType = "DEV-Task" AND assignee = "${accountId}" AND status = Done AND resolutiondate >= -30d ORDER BY resolutiondate DESC`
+  const jql = `issueType = "DEV-Task" AND assignee = "${accountId}" AND status = Done AND resolutiondate >= -${days}d ORDER BY resolutiondate DESC`
 
   let allIssues = []
   let nextPageToken = undefined
@@ -82,13 +82,14 @@ async function fetchTasksForUser({ accountId, displayName }) {
   }
 
   const opCount = (counts['OP-Bug'] ?? 0) + (counts['OP-Task'] ?? 0)
-  return { user: displayName, accountId, total: allIssues.length, opCount, counts }
+  return { user: displayName, accountId, days, total: allIssues.length, opCount, counts }
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function App() {
   const [username, setUsername] = useState('')
+  const [days, setDays] = useState(30)
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
@@ -107,7 +108,7 @@ export default function App() {
         setCandidates(found)
         return
       }
-      setData(await fetchTasksForUser(found[0]))
+      setData(await fetchTasksForUser(found[0], days))
     } catch (e) {
       setError(e.message ?? '查詢失敗，請稍後再試')
     } finally {
@@ -122,7 +123,7 @@ export default function App() {
     setError(null)
     setData(null)
     try {
-      setData(await fetchTasksForUser(user))
+      setData(await fetchTasksForUser(user, days))
     } catch (e) {
       setError(e.message ?? '查詢失敗，請稍後再試')
     } finally {
@@ -134,10 +135,10 @@ export default function App() {
 
   const jiraBase = 'https://kkvideo.atlassian.net'
   const allUrl = data ? `${jiraBase}/issues/?jql=${encodeURIComponent(
-    `issueType = "DEV-Task" AND assignee = "${data.accountId}" AND status = Done AND resolutiondate >= -30d ORDER BY resolutiondate DESC`
+    `issueType = "DEV-Task" AND assignee = "${data.accountId}" AND status = Done AND resolutiondate >= -${data.days}d ORDER BY resolutiondate DESC`
   )}` : null
   const opUrl = data ? `${jiraBase}/issues/?jql=${encodeURIComponent(
-    `issueType = "DEV-Task" AND assignee = "${data.accountId}" AND status = Done AND resolutiondate >= -30d AND "Dev Type" in ("OP-Bug", "OP-Task") ORDER BY resolutiondate DESC`
+    `issueType = "DEV-Task" AND assignee = "${data.accountId}" AND status = Done AND resolutiondate >= -${data.days}d AND "Dev Type" in ("OP-Bug", "OP-Task") ORDER BY resolutiondate DESC`
   )}` : null
 
   const pieData = data
@@ -160,7 +161,21 @@ export default function App() {
 
       <main className="main">
         <div className="search-card">
-          <label className="search-label" htmlFor="username">Jira 顯示名稱</label>
+          <div className="search-label-row">
+            <label className="search-label" htmlFor="username">Jira 顯示名稱</label>
+            <span className="days-picker">
+              近
+              <input
+                type="number"
+                className="days-input"
+                value={days}
+                min={1}
+                max={365}
+                onChange={e => setDays(Math.max(1, parseInt(e.target.value) || 30))}
+              />
+              天
+            </span>
+          </div>
           <div className="search-row">
             <input
               id="username"
@@ -204,7 +219,7 @@ export default function App() {
           <div className="results">
             <div className="result-meta">
               <span className="result-user">{data.user}</span>
-              <span className="result-range">近 30 天</span>
+              <span className="result-range">近 {data.days} 天</span>
             </div>
 
             <div className="stat-row">
