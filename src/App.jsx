@@ -57,7 +57,7 @@ async function searchUsers(query) {
 async function fetchTasksForUser({ accountId, displayName }, days) {
   const fieldId = await getDevTypeFieldId()
 
-  const jql = `issueType = "DEV-Task" AND assignee = "${accountId}" AND status = Done AND status CHANGED TO Done AFTER -${days}d ORDER BY updated DESC`
+  const jql = `issueType in ("DEV-Task", "QA-Task") AND assignee = "${accountId}" AND status = Done AND status CHANGED TO Done AFTER -${days}d ORDER BY updated DESC`
 
   let allIssues = []
   let nextPageToken = undefined
@@ -136,10 +136,10 @@ export default function App() {
 
   const jiraBase = 'https://kkvideo.atlassian.net'
   const allUrl = data ? `${jiraBase}/issues/?jql=${encodeURIComponent(
-    `issueType = "DEV-Task" AND assignee = "${data.accountId}" AND status = Done AND status CHANGED TO Done AFTER -${data.days}d ORDER BY updated DESC`
+    `issueType in ("DEV-Task", "QA-Task") AND assignee = "${data.accountId}" AND status = Done AND status CHANGED TO Done AFTER -${data.days}d ORDER BY updated DESC`
   )}` : null
   const opUrl = data ? `${jiraBase}/issues/?jql=${encodeURIComponent(
-    `issueType = "DEV-Task" AND assignee = "${data.accountId}" AND status = Done AND status CHANGED TO Done AFTER -${data.days}d AND "Dev Type" in ("OP-Bug", "OP-Task") ORDER BY updated DESC`
+    `issueType in ("DEV-Task", "QA-Task") AND assignee = "${data.accountId}" AND status = Done AND status CHANGED TO Done AFTER -${data.days}d AND "Dev Type" in ("OP-Bug", "OP-Task") ORDER BY updated DESC`
   )}` : null
 
   const pieData = data
@@ -157,7 +157,7 @@ export default function App() {
     <div className="app">
       <header className="header">
         <h1>Dev Type 分析</h1>
-        <p>查看成員近期完成 DEV-Task 的 Operation 比例</p>
+        <p>查看成員近期完成 DEV-Task / QA-Task 的 Operation 比例</p>
       </header>
 
       <main className="main">
