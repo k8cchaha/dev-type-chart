@@ -765,6 +765,14 @@ a.stat-card:hover {
   font-size: .8125rem;
   color: var(--text-muted);
 }
+.team-filters-row {
+  display: flex;
+  gap: .5rem;
+}
+.team-filters-row .multiselect {
+  flex: 1;
+  min-width: 0;
+}
 .team-search-row {
   display: flex;
   justify-content: flex-end;

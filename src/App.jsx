@@ -32,6 +32,12 @@ const GROUPS = [
   { label: 'QA',      jiraName: 'ent-qa' },
 ]
 
+const PROJECTS = [
+  { label: 'Saku',   key: 'sun' },
+  { label: 'Telasa', key: 'tkk' },
+  { label: 'Pride',  key: 'pride' },
+]
+
 // ── Jira API helpers ──────────────────────────────────────────────────────────
 
 let cachedFields = null
@@ -102,11 +108,12 @@ async function fetchGroupMembers(jiraName) {
   return allMembers
 }
 
-async function fetchTasksForUser({ accountId, displayName }, days) {
+async function fetchTasksForUser({ accountId, displayName }, days, projectKeys = []) {
   const { devTypeId, spId, storyPointsId } = await getFieldIds()
   const fieldList = [devTypeId, spId, storyPointsId, 'summary', 'resolution', 'parent'].filter(Boolean).join(',')
 
-  const jql = `issueType in ("DEV-Task", "QA-Task") AND assignee = "${accountId}" AND status = Done AND status CHANGED TO Done AFTER -${days}d ORDER BY updated DESC`
+  const projectClause = projectKeys.length > 0 ? ` AND project in (${projectKeys.join(',')})` : ''
+  const jql = `issueType in ("DEV-Task", "QA-Task") AND assignee = "${accountId}" AND status = Done AND status CHANGED TO Done AFTER -${days}d${projectClause} ORDER BY updated DESC`
 
   let allIssues = []
   let nextPageToken = undefined
@@ -168,8 +175,8 @@ async function fetchTasksForUser({ accountId, displayName }, days) {
   }
 }
 
-async function fetchAndAggregate(members, days) {
-  const results = await Promise.all(members.map(m => fetchTasksForUser(m, days)))
+async function fetchAndAggregate(members, days, projectKeys = []) {
+  const results = await Promise.all(members.map(m => fetchTasksForUser(m, days, projectKeys)))
   const counts = {}, points = {}
   let total = 0, opCount = 0, totalPoints = 0, opPoints = 0, hasPoints = false
   let fieldIds = { spId: null, storyPointsId: null }
@@ -186,7 +193,7 @@ async function fetchAndAggregate(members, days) {
     missingSpIssues.push(...r.missingSpIssues)
   }
   return {
-    mode: 'team', membersList: members, days,
+    mode: 'team', membersList: members, days, projectKeys,
     total, opCount, counts,
     totalPoints, opPoints, points,
     hasPoints, missingSpIssues, fieldIds,
@@ -231,6 +238,12 @@ export default function App() {
   const [loadingGroups, setLoadingGroups]         = useState(new Set())
   const [dropdownOpen, setDropdownOpen]           = useState(false)
   const dropdownRef = useRef()
+  const [selectedProjects, setSelectedProjects]   = useState(() => {
+    try { const s = localStorage.getItem('devChart_selectedProjects'); return s ? new Set(JSON.parse(s)) : new Set() }
+    catch { return new Set() }
+  })
+  const [projectDropdownOpen, setProjectDropdownOpen] = useState(false)
+  const projectDropdownRef = useRef()
 
   // ── Team helpers ──────────────────────────────────────────────────────────
 
@@ -289,6 +302,15 @@ export default function App() {
     return () => document.removeEventListener('mousedown', onMouseDown)
   }, [dropdownOpen])
 
+  useEffect(() => {
+    if (!projectDropdownOpen) return
+    function onMouseDown(e) {
+      if (!projectDropdownRef.current?.contains(e.target)) setProjectDropdownOpen(false)
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [projectDropdownOpen])
+
   useEffect(() => { localStorage.setItem('devChart_mode', mode) }, [mode])
   useEffect(() => {
     localStorage.setItem('devChart_selectedGroups', JSON.stringify([...selectedGroups]))
@@ -297,6 +319,9 @@ export default function App() {
     const obj = Object.fromEntries(Object.entries(deselectedMembers).map(([k, v]) => [k, [...v]]))
     localStorage.setItem('devChart_deselectedMembers', JSON.stringify(obj))
   }, [deselectedMembers])
+  useEffect(() => {
+    localStorage.setItem('devChart_selectedProjects', JSON.stringify([...selectedProjects]))
+  }, [selectedProjects])
 
   // Auto-load members for groups restored from localStorage
   useEffect(() => {
@@ -368,8 +393,10 @@ export default function App() {
     setLoading(true); setError(null); setData(null)
     try {
       const groupLabels = GROUPS.filter(g => selectedGroups.has(g.jiraName)).map(g => g.label)
-      const result = await fetchAndAggregate(members, days)
-      setData({ ...result, groupLabels })
+      const projectKeys = [...selectedProjects]
+      const projectLabels = PROJECTS.filter(p => selectedProjects.has(p.key)).map(p => p.label)
+      const result = await fetchAndAggregate(members, days, projectKeys)
+      setData({ ...result, groupLabels, projectLabels })
     } catch (e) {
       setError(e.message ?? '查詢失敗，請稍後再試')
     } finally {
@@ -384,8 +411,8 @@ export default function App() {
     try {
       let result
       if (data.mode === 'team') {
-        const r = await fetchAndAggregate(data.membersList, data.days)
-        result = { ...r, groupLabels: data.groupLabels }
+        const r = await fetchAndAggregate(data.membersList, data.days, data.projectKeys ?? [])
+        result = { ...r, groupLabels: data.groupLabels, projectLabels: data.projectLabels }
       } else {
         result = await fetchTasksForUser({ accountId: data.accountId, displayName: data.user }, data.days)
         if (rememberMe) localStorage.setItem(STORAGE_KEY, result.user)
@@ -411,11 +438,14 @@ export default function App() {
   const assigneeClause = data?.mode === 'team'
     ? `assignee in (${data.membersList.map(m => `"${m.accountId}"`).join(',')})`
     : data ? `assignee = "${data.accountId}"` : ''
+  const projectClause = data?.projectKeys?.length > 0
+    ? ` AND project in (${data.projectKeys.join(',')})`
+    : ''
   const allUrl = data ? `${jiraBase}/issues/?jql=${encodeURIComponent(
-    `issueType in ("DEV-Task", "QA-Task") AND ${assigneeClause} AND status = Done AND status CHANGED TO Done AFTER -${data.days}d ORDER BY updated DESC`
+    `issueType in ("DEV-Task", "QA-Task") AND ${assigneeClause}${projectClause} AND status = Done AND status CHANGED TO Done AFTER -${data.days}d ORDER BY updated DESC`
   )}` : null
   const opUrl = data ? `${jiraBase}/issues/?jql=${encodeURIComponent(
-    `issueType in ("DEV-Task", "QA-Task") AND ${assigneeClause} AND status = Done AND status CHANGED TO Done AFTER -${data.days}d AND "Dev Type" in ("OP-Bug", "OP-Task") ORDER BY updated DESC`
+    `issueType in ("DEV-Task", "QA-Task") AND ${assigneeClause}${projectClause} AND status = Done AND status CHANGED TO Done AFTER -${data.days}d AND "Dev Type" in ("OP-Bug", "OP-Task") ORDER BY updated DESC`
   )}` : null
 
   const pieData = data
@@ -450,12 +480,12 @@ export default function App() {
             <button
               className={`mode-tab${mode === 'team' ? ' active' : ''}`}
               onClick={() => { setMode('team'); setData(null); setError(null); setCandidates([]) }}
-            >團隊</button>
+            >專案/團隊</button>
           </div>
 
           <div className="search-label-row">
             <label className="search-label">
-              {mode === 'individual' ? 'Jira 顯示名稱' : '選擇群組'}
+              {mode === 'individual' ? 'Jira 顯示名稱' : '選擇群組 ／ 專案'}
             </label>
             <span className="days-picker">
               近
@@ -519,87 +549,126 @@ export default function App() {
             </>
           ) : (
             <>
-              {(() => {
-                const selectedLabels = GROUPS.filter(g => selectedGroups.has(g.jiraName)).map(g => g.label)
-                const triggerLabel = selectedLabels.length === 0
-                  ? '選擇群組…'
-                  : selectedLabels.length <= 3
-                    ? selectedLabels.join(' · ')
-                    : `${selectedLabels.length} 個群組`
-                return (
-                  <div className="multiselect" ref={dropdownRef}>
-                    <button
-                      className={`multiselect-trigger${dropdownOpen ? ' open' : ''}`}
-                      onClick={() => setDropdownOpen(v => !v)}
-                    >
-                      <span className={selectedLabels.length === 0 ? 'trigger-placeholder' : ''}>
-                        {triggerLabel}
-                      </span>
-                      <span className="trigger-arrow">▾</span>
-                    </button>
+              <div className="team-filters-row">
+                {(() => {
+                  const selectedLabels = GROUPS.filter(g => selectedGroups.has(g.jiraName)).map(g => g.label)
+                  const triggerLabel = selectedLabels.length === 0
+                    ? '選擇群組…'
+                    : selectedLabels.length <= 3
+                      ? selectedLabels.join(' · ')
+                      : `${selectedLabels.length} 個群組`
+                  return (
+                    <div className="multiselect" ref={dropdownRef}>
+                      <button
+                        className={`multiselect-trigger${dropdownOpen ? ' open' : ''}`}
+                        onClick={() => setDropdownOpen(v => !v)}
+                      >
+                        <span className={selectedLabels.length === 0 ? 'trigger-placeholder' : ''}>
+                          {triggerLabel}
+                        </span>
+                        <span className="trigger-arrow">▾</span>
+                      </button>
 
-                    {dropdownOpen && (
-                      <div className="multiselect-dropdown">
-                        {GROUPS.map(({ label, jiraName }) => {
-                          const isSelected    = selectedGroups.has(jiraName)
-                          const isExpanded    = expandedGroups.has(jiraName)
-                          const isLoadingMbr  = loadingGroups.has(jiraName)
-                          const members       = groupMembers[jiraName] ?? []
-                          const deselected    = deselectedMembers[jiraName] ?? new Set()
-                          const someDeselected = isSelected && deselected.size > 0
-                          const selectedCount  = isSelected ? members.length - deselected.size : 0
-                          return (
-                            <div key={jiraName}>
-                              <div className="dd-group-row">
-                                <button
-                                  className={`dd-expand-btn${isExpanded ? ' open' : ''}`}
-                                  onClick={() => toggleGroupExpanded(jiraName)}
-                                  aria-label={isExpanded ? '收合' : '展開成員'}
-                                >
-                                  {isExpanded && isLoadingMbr ? '…' : isExpanded ? '▾' : '▸'}
-                                </button>
-                                <GroupCheckbox
-                                  id={`group-dd-${jiraName}`}
-                                  checked={isSelected}
-                                  indeterminate={someDeselected}
-                                  onChange={() => toggleGroupSelected(jiraName)}
-                                />
-                                <label className="dd-group-label" htmlFor={`group-dd-${jiraName}`}>
-                                  {label}
-                                </label>
-                                {isSelected && members.length > 0 && (
-                                  <span className="dd-group-count">{selectedCount}</span>
+                      {dropdownOpen && (
+                        <div className="multiselect-dropdown">
+                          {GROUPS.map(({ label, jiraName }) => {
+                            const isSelected    = selectedGroups.has(jiraName)
+                            const isExpanded    = expandedGroups.has(jiraName)
+                            const isLoadingMbr  = loadingGroups.has(jiraName)
+                            const members       = groupMembers[jiraName] ?? []
+                            const deselected    = deselectedMembers[jiraName] ?? new Set()
+                            const someDeselected = isSelected && deselected.size > 0
+                            const selectedCount  = isSelected ? members.length - deselected.size : 0
+                            return (
+                              <div key={jiraName}>
+                                <div className="dd-group-row">
+                                  <button
+                                    className={`dd-expand-btn${isExpanded ? ' open' : ''}`}
+                                    onClick={() => toggleGroupExpanded(jiraName)}
+                                    aria-label={isExpanded ? '收合' : '展開成員'}
+                                  >
+                                    {isExpanded && isLoadingMbr ? '…' : isExpanded ? '▾' : '▸'}
+                                  </button>
+                                  <GroupCheckbox
+                                    id={`group-dd-${jiraName}`}
+                                    checked={isSelected}
+                                    indeterminate={someDeselected}
+                                    onChange={() => toggleGroupSelected(jiraName)}
+                                  />
+                                  <label className="dd-group-label" htmlFor={`group-dd-${jiraName}`}>
+                                    {label}
+                                  </label>
+                                  {isSelected && members.length > 0 && (
+                                    <span className="dd-group-count">{selectedCount}</span>
+                                  )}
+                                </div>
+
+                                {isExpanded && (
+                                  isLoadingMbr ? (
+                                    <div className="dd-loading">載入中…</div>
+                                  ) : members.map(m => {
+                                    const isChecked = isSelected && !deselected.has(m.accountId)
+                                    return (
+                                      <label
+                                        key={m.accountId}
+                                        className="dd-member-row"
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={isChecked}
+                                          onChange={() => toggleMember(jiraName, m.accountId)}
+                                        />
+                                        <span>{m.displayName}</span>
+                                      </label>
+                                    )
+                                  })
                                 )}
                               </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
 
-                              {isExpanded && (
-                                isLoadingMbr ? (
-                                  <div className="dd-loading">載入中…</div>
-                                ) : members.map(m => {
-                                  const isChecked = isSelected && !deselected.has(m.accountId)
-                                  return (
-                                    <label
-                                      key={m.accountId}
-                                      className="dd-member-row"
-                                    >
-                                      <input
-                                        type="checkbox"
-                                        checked={isChecked}
-                                        onChange={() => toggleMember(jiraName, m.accountId)}
-                                      />
-                                      <span>{m.displayName}</span>
-                                    </label>
-                                  )
-                                })
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )
-              })()}
+                {(() => {
+                  const selectedLabels = PROJECTS.filter(p => selectedProjects.has(p.key)).map(p => p.label)
+                  const triggerLabel = selectedLabels.length === 0
+                    ? '選擇專案…'
+                    : selectedLabels.join(' · ')
+                  return (
+                    <div className="multiselect" ref={projectDropdownRef}>
+                      <button
+                        className={`multiselect-trigger${projectDropdownOpen ? ' open' : ''}`}
+                        onClick={() => setProjectDropdownOpen(v => !v)}
+                      >
+                        <span className={selectedLabels.length === 0 ? 'trigger-placeholder' : ''}>
+                          {triggerLabel}
+                        </span>
+                        <span className="trigger-arrow">▾</span>
+                      </button>
+
+                      {projectDropdownOpen && (
+                        <div className="multiselect-dropdown">
+                          {PROJECTS.map(({ label, key }) => (
+                            <label key={key} className="dd-member-row">
+                              <input
+                                type="checkbox"
+                                checked={selectedProjects.has(key)}
+                                onChange={() => setSelectedProjects(prev => {
+                                  const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s
+                                })}
+                              />
+                              <span>{label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+              </div>
 
               <div className="team-search-row">
                 <button
@@ -622,6 +691,9 @@ export default function App() {
               {data.mode === 'team' ? (
                 <>
                   <span className="result-user">{data.groupLabels?.join(' · ')}</span>
+                  {data.projectLabels?.length > 0 && (
+                    <span className="result-range">{data.projectLabels.join(' · ')}</span>
+                  )}
                   <span className="result-range">近 {data.days} 天</span>
                   <span
                     className="result-range result-member-count"
