@@ -261,9 +261,9 @@ export default function App() {
                 className={`toggle-btn${isPoints ? ' active' : ''}`}
                 onClick={() => setViewMode('points')}
                 disabled={!data.hasPoints}
-                title={!data.hasPoints ? 'Actual Story Points 欄位不存在' : undefined}
+                title={!data.hasPoints ? '"Actual Story Points" 欄位不存在' : undefined}
               >
-                Story Points
+                Actual Story Points
               </button>
             </div>
 
@@ -325,7 +325,7 @@ export default function App() {
                   <h3>細項分布</h3>
                   <table className="breakdown-table">
                     <thead>
-                      <tr><th>Dev Type</th><th>{isPoints ? 'SP' : '數量'}</th><th>比例</th></tr>
+                      <tr><th>Dev Type</th><th>{isPoints ? 'Actual SP' : '數量'}</th><th>比例</th></tr>
                     </thead>
                     <tbody>
                       {tableRows.map(([type, count]) => (
