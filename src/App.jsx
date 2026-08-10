@@ -93,10 +93,13 @@ async function fetchTasksForUser({ accountId, displayName }, days) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
+const STORAGE_KEY = 'devtype_remember_name'
+
 export default function App() {
-  const [username, setUsername] = useState('')
+  const [username, setUsername] = useState(() => localStorage.getItem(STORAGE_KEY) ?? '')
   const [daysInput, setDaysInput] = useState('30')
   const days = Math.max(1, parseInt(daysInput) || 30)
+  const [rememberMe, setRememberMe] = useState(() => !!localStorage.getItem(STORAGE_KEY))
   const [viewMode, setViewMode] = useState('count')
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState(null)
@@ -116,7 +119,9 @@ export default function App() {
         setCandidates(found)
         return
       }
-      setData(await fetchTasksForUser(found[0], days))
+      const result = await fetchTasksForUser(found[0], days)
+      setData(result)
+      if (rememberMe) localStorage.setItem(STORAGE_KEY, result.user)
     } catch (e) {
       setError(e.message ?? '查詢失敗，請稍後再試')
     } finally {
@@ -131,7 +136,9 @@ export default function App() {
     setError(null)
     setData(null)
     try {
-      setData(await fetchTasksForUser(user, days))
+      const result = await fetchTasksForUser(user, days)
+      setData(result)
+      if (rememberMe) localStorage.setItem(STORAGE_KEY, result.user)
     } catch (e) {
       setError(e.message ?? '查詢失敗，請稍後再試')
     } finally {
@@ -208,6 +215,19 @@ export default function App() {
               {loading ? '查詢中…' : '查詢'}
             </button>
           </div>
+          <div className="remember-row">
+            <input
+              type="checkbox"
+              id="remember-me"
+              checked={rememberMe}
+              onChange={e => {
+                setRememberMe(e.target.checked)
+                if (!e.target.checked) localStorage.removeItem(STORAGE_KEY)
+              }}
+            />
+            <label htmlFor="remember-me">記住我</label>
+          </div>
+
           {candidates.length > 0 && (
             <div className="candidates">
               <span className="candidates-hint">找到多位用戶，請選擇：</span>
