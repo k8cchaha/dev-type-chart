@@ -322,11 +322,10 @@ export default function App() {
                   Actual Story Points
                 </button>
               </div>
-              {data.missingSpIssues.length > 0 && (
-                <button className="warn-btn" onClick={() => setShowMissingModal(true)}>
-                  ⚠ {data.missingSpIssues.length} 筆缺 SP
-                </button>
-              )}
+              {data.missingSpIssues.length > 0
+                ? <button className="warn-btn" onClick={() => setShowMissingModal(true)}>⚠ {data.missingSpIssues.length} 筆缺 SP</button>
+                : <span className="sp-complete">✓ 資料完整，太棒了！</span>
+              }
             </div>
 
             <div className="stat-row">

@@ -257,6 +257,11 @@ body {
   transition: background .12s;
 }
 .warn-btn:hover { background: #feecd0; }
+.sp-complete {
+  font-size: .8125rem;
+  font-weight: 500;
+  color: #27a665;
+}
 @media (prefers-color-scheme: dark) {
   .warn-btn { background: #2a1c00; border-color: #a06a00; color: #ffc96b; }
   .warn-btn:hover { background: #3a2700; }
