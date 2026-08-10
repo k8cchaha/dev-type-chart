@@ -485,7 +485,7 @@ export default function App() {
 
           <div className="search-label-row">
             <label className="search-label">
-              {mode === 'individual' ? 'Jira 顯示名稱' : '選擇群組 ／ 專案'}
+              {mode === 'individual' ? 'Jira 顯示名稱' : '選擇團隊 ／ 專案'}
             </label>
             <span className="days-picker">
               近
@@ -553,10 +553,10 @@ export default function App() {
                 {(() => {
                   const selectedLabels = GROUPS.filter(g => selectedGroups.has(g.jiraName)).map(g => g.label)
                   const triggerLabel = selectedLabels.length === 0
-                    ? '選擇群組…'
+                    ? '選擇團隊…'
                     : selectedLabels.length <= 3
                       ? selectedLabels.join(' · ')
-                      : `${selectedLabels.length} 個群組`
+                      : `${selectedLabels.length} 個團隊`
                   return (
                     <div className="multiselect" ref={dropdownRef}>
                       <button
