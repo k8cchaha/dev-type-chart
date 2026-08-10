@@ -19,7 +19,7 @@ const PIE_COLORS = ['#eb6834', '#2a78d6']
 
 // ── Jira API helpers ──────────────────────────────────────────────────────────
 
-let cachedFieldId = null
+let cachedFields = null
 
 function jiraAuth() {
   return 'Basic ' + btoa(`${JIRA_EMAIL}:${JIRA_API_TOKEN}`)
@@ -38,13 +38,14 @@ async function jiraGet(path, params) {
 }
 
 
-async function getDevTypeFieldId() {
-  if (cachedFieldId) return cachedFieldId
+async function getFieldIds() {
+  if (cachedFields) return cachedFields
   const fields = await jiraGet('/rest/api/3/field')
-  const f = fields.find(f => f.name === 'Dev Type')
-  if (!f) throw new Error('"Dev Type" 欄位不存在，請確認 Jira 設定')
-  cachedFieldId = f.id
-  return f.id
+  const devType = fields.find(f => f.name === 'Dev Type')
+  if (!devType) throw new Error('"Dev Type" 欄位不存在，請確認 Jira 設定')
+  const actualSP = fields.find(f => f.name === 'Actual Story Points')
+  cachedFields = { devTypeId: devType.id, spId: actualSP?.id ?? null }
+  return cachedFields
 }
 
 async function searchUsers(query) {
@@ -55,7 +56,8 @@ async function searchUsers(query) {
 }
 
 async function fetchTasksForUser({ accountId, displayName }, days) {
-  const fieldId = await getDevTypeFieldId()
+  const { devTypeId, spId } = await getFieldIds()
+  const fieldList = [devTypeId, spId].filter(Boolean).join(',')
 
   const jql = `issueType in ("DEV-Task", "QA-Task") AND assignee = "${accountId}" AND status = Done AND status CHANGED TO Done AFTER -${days}d ORDER BY updated DESC`
 
@@ -63,7 +65,7 @@ async function fetchTasksForUser({ accountId, displayName }, days) {
   let nextPageToken = undefined
 
   while (true) {
-    const params = { jql, fields: fieldId, maxResults: 100 }
+    const params = { jql, fields: fieldList, maxResults: 100 }
     if (nextPageToken) params.nextPageToken = nextPageToken
 
     const result = await jiraGet('/rest/api/3/search/jql', params)
@@ -74,15 +76,19 @@ async function fetchTasksForUser({ accountId, displayName }, days) {
     if (!nextPageToken || issues.length === 0) break
   }
 
-  const counts = {}
+  const counts = {}, points = {}
   for (const issue of allIssues) {
-    const raw = issue.fields?.[fieldId]
+    const raw = issue.fields?.[devTypeId]
     const label = !raw ? 'Unknown' : (raw.value ?? String(raw))
     counts[label] = (counts[label] ?? 0) + 1
+    const sp = spId ? (issue.fields?.[spId] ?? 0) : 0
+    points[label] = (points[label] ?? 0) + sp
   }
 
   const opCount = (counts['OP-Bug'] ?? 0) + (counts['OP-Task'] ?? 0)
-  return { user: displayName, accountId, days, total: allIssues.length, opCount, counts }
+  const totalPoints = Object.values(points).reduce((a, b) => a + b, 0)
+  const opPoints = (points['OP-Bug'] ?? 0) + (points['OP-Task'] ?? 0)
+  return { user: displayName, accountId, days, total: allIssues.length, opCount, counts, totalPoints, opPoints, points, hasPoints: spId !== null }
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -91,6 +97,7 @@ export default function App() {
   const [username, setUsername] = useState('')
   const [daysInput, setDaysInput] = useState('30')
   const days = Math.max(1, parseInt(daysInput) || 30)
+  const [viewMode, setViewMode] = useState('count')
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
@@ -132,7 +139,12 @@ export default function App() {
     }
   }
 
-  const opPct = data && data.total > 0 ? Math.round(data.opCount / data.total * 100) : 0
+  const isPoints = viewMode === 'points'
+  const displayTotal = data ? (isPoints ? data.totalPoints : data.total) : 0
+  const displayOp    = data ? (isPoints ? data.opPoints   : data.opCount) : 0
+  const displayMap   = data ? (isPoints ? data.points     : data.counts)  : {}
+  const opPct = displayTotal > 0 ? Math.round(displayOp / displayTotal * 100) : 0
+  const fmt = v => isPoints ? `${Math.round(v)} SP` : v
 
   const jiraBase = 'https://kkvideo.atlassian.net'
   const allUrl = data ? `${jiraBase}/issues/?jql=${encodeURIComponent(
@@ -144,13 +156,13 @@ export default function App() {
 
   const pieData = data
     ? [
-        { name: 'Operation',   value: data.opCount },
-        { name: '非 Operation', value: data.total - data.opCount },
+        { name: 'Operation',   value: displayOp },
+        { name: '非 Operation', value: displayTotal - displayOp },
       ].filter(d => d.value > 0)
     : []
 
   const tableRows = data
-    ? Object.entries(data.counts).sort((a, b) => b[1] - a[1])
+    ? Object.entries(displayMap).sort((a, b) => b[1] - a[1])
     : []
 
   return (
@@ -223,9 +235,21 @@ export default function App() {
               <span className="result-range">近 {data.days} 天</span>
             </div>
 
+            <div className="view-toggle">
+              <button className={`toggle-btn${!isPoints ? ' active' : ''}`} onClick={() => setViewMode('count')}>任務數量</button>
+              <button
+                className={`toggle-btn${isPoints ? ' active' : ''}`}
+                onClick={() => setViewMode('points')}
+                disabled={!data.hasPoints}
+                title={!data.hasPoints ? 'Actual Story Points 欄位不存在' : undefined}
+              >
+                Story Points
+              </button>
+            </div>
+
             <div className="stat-row">
-              <StatCard label="完成任務" value={data.total} href={allUrl} />
-              <StatCard label="Operation" value={data.opCount} accent href={opUrl} />
+              <StatCard label="完成任務" value={fmt(displayTotal)} href={allUrl} />
+              <StatCard label="Operation" value={fmt(displayOp)} accent href={opUrl} />
               <StatCard label="Operation 比例" value={`${opPct}%`} accent large />
             </div>
 
@@ -256,7 +280,7 @@ export default function App() {
                     </text>
 
                     <Tooltip
-                      formatter={(v, n) => [`${v} 個（${data.total > 0 ? Math.round(v / data.total * 100) : 0}%）`, n]}
+                      formatter={(v, n) => [`${fmt(v)}（${displayTotal > 0 ? Math.round(v / displayTotal * 100) : 0}%）`, n]}
                       contentStyle={{
                         background: '#fcfcfb', border: '1px solid #e1e0d9',
                         borderRadius: '8px', fontSize: '13px',
@@ -271,7 +295,7 @@ export default function App() {
                       <div key={entry.name} className="legend-item">
                         <span className="legend-swatch" style={{ background: PIE_COLORS[i] }} />
                         <span className="legend-name">{entry.name}</span>
-                        <span className="legend-count">{entry.value} 個</span>
+                        <span className="legend-count">{fmt(entry.value)}</span>
                       </div>
                     ))}
                   </div>
@@ -281,7 +305,7 @@ export default function App() {
                   <h3>細項分布</h3>
                   <table className="breakdown-table">
                     <thead>
-                      <tr><th>Dev Type</th><th>數量</th><th>比例</th></tr>
+                      <tr><th>Dev Type</th><th>{isPoints ? 'SP' : '數量'}</th><th>比例</th></tr>
                     </thead>
                     <tbody>
                       {tableRows.map(([type, count]) => (
@@ -291,8 +315,8 @@ export default function App() {
                             {type}
                             {OP_TYPES.has(type) && <span className="op-tag">OP</span>}
                           </td>
-                          <td>{count}</td>
-                          <td>{Math.round(count / data.total * 100)}%</td>
+                          <td>{fmt(count)}</td>
+                          <td>{displayTotal > 0 ? Math.round(count / displayTotal * 100) : 0}%</td>
                         </tr>
                       ))}
                     </tbody>
