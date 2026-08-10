@@ -305,6 +305,13 @@ export default function App() {
 
   function toggleMember(jiraName, accountId) {
     const members = groupMembers[jiraName] ?? []
+    if (!selectedGroups.has(jiraName)) {
+      // Group not selected: select it with only this member checked
+      setSelectedGroups(prev => new Set([...prev, jiraName]))
+      const allOthers = new Set(members.filter(m => m.accountId !== accountId).map(m => m.accountId))
+      setDeselectedMembers(prev => ({ ...prev, [jiraName]: allOthers }))
+      return
+    }
     const prevDeselected = deselectedMembers[jiraName] ?? new Set()
     if (prevDeselected.has(accountId)) {
       const next = new Set(prevDeselected)
@@ -573,13 +580,12 @@ export default function App() {
                                   return (
                                     <label
                                       key={m.accountId}
-                                      className={`dd-member-row${!isSelected ? ' disabled' : ''}`}
+                                      className="dd-member-row"
                                     >
                                       <input
                                         type="checkbox"
                                         checked={isChecked}
-                                        disabled={!isSelected}
-                                        onChange={() => isSelected && toggleMember(jiraName, m.accountId)}
+                                        onChange={() => toggleMember(jiraName, m.accountId)}
                                       />
                                       <span>{m.displayName}</span>
                                     </label>
