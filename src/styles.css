@@ -282,6 +282,9 @@ a.stat-card:hover {
   gap: 1.25rem;
 }
 
+/* ── Recharts ────────────────────────────────────────────────────────────── */
+.recharts-sector:focus, .recharts-layer:focus { outline: none; }
+
 /* ── Chart card ──────────────────────────────────────────────────────────── */
 .chart-card {
   background: var(--surface-1);
