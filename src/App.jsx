@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { PieChart, Pie, Cell, Tooltip } from 'recharts'
+
 const JIRA_EMAIL     = import.meta.env.VITE_JIRA_EMAIL
 const JIRA_API_TOKEN = import.meta.env.VITE_JIRA_API_TOKEN
 
@@ -16,6 +17,20 @@ const TYPE_COLORS = {
 }
 
 const PIE_COLORS = ['#eb6834', '#2a78d6']
+
+const GROUPS = [
+  { label: 'Web',     jiraName: 'ent-web' },
+  { label: 'BE1',     jiraName: 'ent-be1' },
+  { label: 'BE2',     jiraName: 'ent-be2' },
+  { label: 'Android', jiraName: 'ent-android' },
+  { label: 'Design',  jiraName: 'ent-design' },
+  { label: 'EP',      jiraName: 'ent-ep' },
+  { label: 'iOS',     jiraName: 'ent-ios' },
+  { label: 'SDET',    jiraName: 'ent-sdet' },
+  { label: 'SRE',     jiraName: 'ent-sre' },
+  { label: 'Pride',   jiraName: 'ent-pride' },
+  { label: 'QA',      jiraName: 'ent-qa' },
+]
 
 // ── Jira API helpers ──────────────────────────────────────────────────────────
 
@@ -49,7 +64,6 @@ async function jiraGet(path, params) {
   return res.json()
 }
 
-
 async function getFieldIds() {
   if (cachedFields) return cachedFields
   const fields = await jiraGet('/rest/api/3/field')
@@ -68,6 +82,24 @@ async function searchUsers(query) {
   const active = users.filter(u => u.accountType === 'atlassian')
   const exact = active.filter(u => u.displayName.toLowerCase() === query.toLowerCase())
   return exact.length > 0 ? exact : active
+}
+
+async function fetchGroupMembers(jiraName) {
+  let allMembers = [], startAt = 0
+  while (true) {
+    const result = await jiraGet('/rest/api/3/group/member', {
+      groupname: jiraName, maxResults: 50, startAt,
+    })
+    const values = result.values ?? []
+    allMembers = allMembers.concat(
+      values
+        .filter(u => u.accountType === 'atlassian')
+        .map(u => ({ accountId: u.accountId, displayName: u.displayName }))
+    )
+    if (result.isLast || values.length === 0) break
+    startAt += values.length
+  }
+  return allMembers
 }
 
 async function fetchTasksForUser({ accountId, displayName }, days) {
@@ -126,7 +158,38 @@ async function fetchTasksForUser({ accountId, displayName }, days) {
       parentType: issue.fields?.parent?.fields?.issuetype?.name ?? null,
     }))
 
-  return { user: displayName, accountId, days, total: allIssues.length, opCount, counts, totalPoints, opPoints, points, hasPoints: spId !== null, missingSpIssues, fieldIds: { spId, storyPointsId } }
+  return {
+    user: displayName, accountId, days,
+    total: allIssues.length, opCount, counts,
+    totalPoints, opPoints, points,
+    hasPoints: spId !== null, missingSpIssues,
+    fieldIds: { spId, storyPointsId },
+  }
+}
+
+async function fetchAndAggregate(members, days) {
+  const results = await Promise.all(members.map(m => fetchTasksForUser(m, days)))
+  const counts = {}, points = {}
+  let total = 0, opCount = 0, totalPoints = 0, opPoints = 0, hasPoints = false
+  let fieldIds = { spId: null, storyPointsId: null }
+  const missingSpIssues = []
+  for (const r of results) {
+    total       += r.total
+    opCount     += r.opCount
+    totalPoints += r.totalPoints
+    opPoints    += r.opPoints
+    hasPoints    = hasPoints || r.hasPoints
+    fieldIds     = r.fieldIds
+    for (const [k, v] of Object.entries(r.counts)) counts[k] = (counts[k] ?? 0) + v
+    for (const [k, v] of Object.entries(r.points)) points[k] = (points[k] ?? 0) + v
+    missingSpIssues.push(...r.missingSpIssues)
+  }
+  return {
+    mode: 'team', membersList: members, days,
+    total, opCount, counts,
+    totalPoints, opPoints, points,
+    hasPoints, missingSpIssues, fieldIds,
+  }
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -134,31 +197,116 @@ async function fetchTasksForUser({ accountId, displayName }, days) {
 const STORAGE_KEY = 'devtype_remember_name'
 
 export default function App() {
-  const [username, setUsername] = useState(() => localStorage.getItem(STORAGE_KEY) ?? '')
+  // Shared
+  const [mode, setMode]           = useState('individual')
   const [daysInput, setDaysInput] = useState('30')
   const days = Math.max(1, parseInt(daysInput) || 30)
-  const [rememberMe, setRememberMe] = useState(() => !!localStorage.getItem(STORAGE_KEY))
-  const [viewMode, setViewMode] = useState('count')
-  const [showMissingModal, setShowMissingModal] = useState(false)
+  const [viewMode, setViewMode]   = useState('count')
+  const [loading, setLoading]     = useState(false)
+  const [data, setData]           = useState(null)
+  const [error, setError]         = useState(null)
+  const [showMissingModal, setShowMissingModal]     = useState(false)
   const [showRefreshOverlay, setShowRefreshOverlay] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [data, setData] = useState(null)
-  const [error, setError] = useState(null)
+
+  // Individual mode
+  const [username, setUsername]     = useState(() => localStorage.getItem(STORAGE_KEY) ?? '')
+  const [rememberMe, setRememberMe] = useState(() => !!localStorage.getItem(STORAGE_KEY))
   const [candidates, setCandidates] = useState([])
+
+  // Team mode
+  const [selectedGroups, setSelectedGroups]       = useState(new Set())
+  const [expandedGroups, setExpandedGroups]       = useState(new Set())
+  const [groupMembers, setGroupMembers]           = useState({})
+  const [deselectedMembers, setDeselectedMembers] = useState({})
+  const [loadingGroups, setLoadingGroups]         = useState(new Set())
+  const [dropdownOpen, setDropdownOpen]           = useState(false)
+  const dropdownRef = useRef()
+
+  // ── Team helpers ──────────────────────────────────────────────────────────
+
+  function getAllSelectedMembers() {
+    const members = [], seen = new Set()
+    for (const jiraName of selectedGroups) {
+      const deselected = deselectedMembers[jiraName] ?? new Set()
+      for (const m of (groupMembers[jiraName] ?? [])) {
+        if (!deselected.has(m.accountId) && !seen.has(m.accountId)) {
+          members.push(m)
+          seen.add(m.accountId)
+        }
+      }
+    }
+    return members
+  }
+
+  async function loadGroupMembers(jiraName) {
+    if (groupMembers[jiraName] !== undefined || loadingGroups.has(jiraName)) return
+    setLoadingGroups(prev => new Set([...prev, jiraName]))
+    try {
+      const members = await fetchGroupMembers(jiraName)
+      setGroupMembers(prev => ({ ...prev, [jiraName]: members }))
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoadingGroups(prev => { const s = new Set(prev); s.delete(jiraName); return s })
+    }
+  }
+
+  function toggleGroupSelected(jiraName) {
+    if (selectedGroups.has(jiraName)) {
+      setSelectedGroups(prev => { const s = new Set(prev); s.delete(jiraName); return s })
+    } else {
+      setSelectedGroups(prev => new Set([...prev, jiraName]))
+      setDeselectedMembers(prev => { const n = { ...prev }; delete n[jiraName]; return n })
+      loadGroupMembers(jiraName)
+    }
+  }
+
+  function toggleGroupExpanded(jiraName) {
+    setExpandedGroups(prev => {
+      const s = new Set(prev)
+      s.has(jiraName) ? s.delete(jiraName) : s.add(jiraName)
+      return s
+    })
+    loadGroupMembers(jiraName)
+  }
+
+  useEffect(() => {
+    if (!dropdownOpen) return
+    function onMouseDown(e) {
+      if (!dropdownRef.current?.contains(e.target)) setDropdownOpen(false)
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [dropdownOpen])
+
+  function toggleMember(jiraName, accountId) {
+    const members = groupMembers[jiraName] ?? []
+    const prevDeselected = deselectedMembers[jiraName] ?? new Set()
+    if (prevDeselected.has(accountId)) {
+      const next = new Set(prevDeselected)
+      next.delete(accountId)
+      setDeselectedMembers(prev => ({ ...prev, [jiraName]: next }))
+    } else {
+      const next = new Set(prevDeselected)
+      next.add(accountId)
+      if (next.size >= members.length) {
+        setSelectedGroups(prev => { const s = new Set(prev); s.delete(jiraName); return s })
+        setDeselectedMembers(prev => { const n = { ...prev }; delete n[jiraName]; return n })
+      } else {
+        setDeselectedMembers(prev => ({ ...prev, [jiraName]: next }))
+      }
+    }
+  }
+
+  // ── Search handlers ───────────────────────────────────────────────────────
 
   async function search() {
     if (!username.trim() || loading) return
-    setLoading(true)
-    setError(null)
-    setData(null)
-    setCandidates([])
+    setLoading(true); setError(null); setData(null); setCandidates([])
     try {
       const found = await searchUsers(username.trim())
       if (found.length === 0) throw new Error('找不到用戶：' + username.trim())
-      if (found.length > 1) {
-        setCandidates(found)
-        return
-      }
+      if (found.length > 1) { setCandidates(found); return }
       const result = await fetchTasksForUser(found[0], days)
       setData(result)
       if (rememberMe) localStorage.setItem(STORAGE_KEY, result.user)
@@ -170,15 +318,27 @@ export default function App() {
   }
 
   async function selectCandidate(user) {
-    setUsername(user.displayName)
-    setCandidates([])
-    setLoading(true)
-    setError(null)
-    setData(null)
+    setUsername(user.displayName); setCandidates([])
+    setLoading(true); setError(null); setData(null)
     try {
       const result = await fetchTasksForUser(user, days)
       setData(result)
       if (rememberMe) localStorage.setItem(STORAGE_KEY, result.user)
+    } catch (e) {
+      setError(e.message ?? '查詢失敗，請稍後再試')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function searchTeam() {
+    const members = getAllSelectedMembers()
+    if (members.length === 0 || loading) return
+    setLoading(true); setError(null); setData(null)
+    try {
+      const groupLabels = GROUPS.filter(g => selectedGroups.has(g.jiraName)).map(g => g.label)
+      const result = await fetchAndAggregate(members, days)
+      setData({ ...result, groupLabels })
     } catch (e) {
       setError(e.message ?? '查詢失敗，請稍後再試')
     } finally {
@@ -191,9 +351,15 @@ export default function App() {
     setShowRefreshOverlay(true)
     await new Promise(r => setTimeout(r, 2000))
     try {
-      const result = await fetchTasksForUser({ accountId: data.accountId, displayName: data.user }, days)
+      let result
+      if (data.mode === 'team') {
+        const r = await fetchAndAggregate(data.membersList, data.days)
+        result = { ...r, groupLabels: data.groupLabels }
+      } else {
+        result = await fetchTasksForUser({ accountId: data.accountId, displayName: data.user }, data.days)
+        if (rememberMe) localStorage.setItem(STORAGE_KEY, result.user)
+      }
       setData(result)
-      if (rememberMe) localStorage.setItem(STORAGE_KEY, result.user)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -201,19 +367,24 @@ export default function App() {
     }
   }
 
-  const isPoints = viewMode === 'points'
-  const displayTotal = data ? (isPoints ? data.totalPoints : data.total) : 0
-  const displayOp    = data ? (isPoints ? data.opPoints   : data.opCount) : 0
-  const displayMap   = data ? (isPoints ? data.points     : data.counts)  : {}
+  // ── Derived values ────────────────────────────────────────────────────────
+
+  const isPoints     = viewMode === 'points'
+  const displayTotal = data ? (isPoints ? data.totalPoints : data.total)   : 0
+  const displayOp    = data ? (isPoints ? data.opPoints    : data.opCount) : 0
+  const displayMap   = data ? (isPoints ? data.points      : data.counts)  : {}
   const opPct = displayTotal > 0 ? Math.round(displayOp / displayTotal * 100) : 0
   const fmt = v => isPoints ? `${Math.round(v)} SP` : v
 
   const jiraBase = 'https://kkvideo.atlassian.net'
+  const assigneeClause = data?.mode === 'team'
+    ? `assignee in (${data.membersList.map(m => `"${m.accountId}"`).join(',')})`
+    : data ? `assignee = "${data.accountId}"` : ''
   const allUrl = data ? `${jiraBase}/issues/?jql=${encodeURIComponent(
-    `issueType in ("DEV-Task", "QA-Task") AND assignee = "${data.accountId}" AND status = Done AND status CHANGED TO Done AFTER -${data.days}d ORDER BY updated DESC`
+    `issueType in ("DEV-Task", "QA-Task") AND ${assigneeClause} AND status = Done AND status CHANGED TO Done AFTER -${data.days}d ORDER BY updated DESC`
   )}` : null
   const opUrl = data ? `${jiraBase}/issues/?jql=${encodeURIComponent(
-    `issueType in ("DEV-Task", "QA-Task") AND assignee = "${data.accountId}" AND status = Done AND status CHANGED TO Done AFTER -${data.days}d AND "Dev Type" in ("OP-Bug", "OP-Task") ORDER BY updated DESC`
+    `issueType in ("DEV-Task", "QA-Task") AND ${assigneeClause} AND status = Done AND status CHANGED TO Done AFTER -${data.days}d AND "Dev Type" in ("OP-Bug", "OP-Task") ORDER BY updated DESC`
   )}` : null
 
   const pieData = data
@@ -222,10 +393,14 @@ export default function App() {
         { name: '非 Operation', value: displayTotal - displayOp },
       ].filter(d => d.value > 0)
     : []
+  const tableRows = data ? Object.entries(displayMap).sort((a, b) => b[1] - a[1]) : []
 
-  const tableRows = data
-    ? Object.entries(displayMap).sort((a, b) => b[1] - a[1])
-    : []
+  const allSelectedMembers = getAllSelectedMembers()
+  const teamQueryable = selectedGroups.size > 0 &&
+    ![...selectedGroups].some(g => loadingGroups.has(g)) &&
+    allSelectedMembers.length > 0
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="app">
@@ -236,8 +411,21 @@ export default function App() {
 
       <main className="main">
         <div className="search-card">
+          <div className="mode-tabs">
+            <button
+              className={`mode-tab${mode === 'individual' ? ' active' : ''}`}
+              onClick={() => { setMode('individual'); setData(null); setError(null) }}
+            >個人</button>
+            <button
+              className={`mode-tab${mode === 'team' ? ' active' : ''}`}
+              onClick={() => { setMode('team'); setData(null); setError(null); setCandidates([]) }}
+            >團隊</button>
+          </div>
+
           <div className="search-label-row">
-            <label className="search-label" htmlFor="username">Jira 顯示名稱</label>
+            <label className="search-label">
+              {mode === 'individual' ? 'Jira 顯示名稱' : '選擇群組'}
+            </label>
             <span className="days-picker">
               近
               <input
@@ -251,53 +439,148 @@ export default function App() {
               天
             </span>
           </div>
-          <div className="search-row">
-            <input
-              id="username"
-              className="search-input"
-              type="text"
-              placeholder="e.g. Tony Stark"
-              value={username}
-              onChange={e => { setUsername(e.target.value); setCandidates([]) }}
-              onKeyDown={e => e.key === 'Enter' && search()}
-              autoComplete="off"
-            />
-            <button
-              className="search-btn"
-              onClick={search}
-              disabled={loading || !username.trim()}
-            >
-              {loading ? '查詢中…' : '查詢'}
-            </button>
-          </div>
-          <div className="remember-row">
-            <input
-              type="checkbox"
-              id="remember-me"
-              checked={rememberMe}
-              onChange={e => {
-                setRememberMe(e.target.checked)
-                if (!e.target.checked) localStorage.removeItem(STORAGE_KEY)
-              }}
-            />
-            <label htmlFor="remember-me">記住我</label>
-          </div>
 
-          {candidates.length > 0 && (
-            <div className="candidates">
-              <span className="candidates-hint">找到多位用戶，請選擇：</span>
-              <div className="candidates-list">
-                {candidates.map(u => (
-                  <button
-                    key={u.accountId}
-                    className="candidate-btn"
-                    onClick={() => selectCandidate(u)}
-                  >
-                    {u.displayName}
-                  </button>
-                ))}
+          {mode === 'individual' ? (
+            <>
+              <div className="search-row">
+                <input
+                  id="username"
+                  className="search-input"
+                  type="text"
+                  placeholder="e.g. Tony Stark"
+                  value={username}
+                  onChange={e => { setUsername(e.target.value); setCandidates([]) }}
+                  onKeyDown={e => e.key === 'Enter' && search()}
+                  autoComplete="off"
+                />
+                <button
+                  className="search-btn"
+                  onClick={search}
+                  disabled={loading || !username.trim()}
+                >
+                  {loading ? '查詢中…' : '查詢'}
+                </button>
               </div>
-            </div>
+              <div className="remember-row">
+                <input
+                  type="checkbox"
+                  id="remember-me"
+                  checked={rememberMe}
+                  onChange={e => {
+                    setRememberMe(e.target.checked)
+                    if (!e.target.checked) localStorage.removeItem(STORAGE_KEY)
+                  }}
+                />
+                <label htmlFor="remember-me">記住我</label>
+              </div>
+              {candidates.length > 0 && (
+                <div className="candidates">
+                  <span className="candidates-hint">找到多位用戶，請選擇：</span>
+                  <div className="candidates-list">
+                    {candidates.map(u => (
+                      <button key={u.accountId} className="candidate-btn" onClick={() => selectCandidate(u)}>
+                        {u.displayName}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {(() => {
+                const selectedLabels = GROUPS.filter(g => selectedGroups.has(g.jiraName)).map(g => g.label)
+                const triggerLabel = selectedLabels.length === 0
+                  ? '選擇群組…'
+                  : selectedLabels.length <= 3
+                    ? selectedLabels.join(' · ')
+                    : `${selectedLabels.length} 個群組`
+                return (
+                  <div className="multiselect" ref={dropdownRef}>
+                    <button
+                      className={`multiselect-trigger${dropdownOpen ? ' open' : ''}`}
+                      onClick={() => setDropdownOpen(v => !v)}
+                    >
+                      <span className={selectedLabels.length === 0 ? 'trigger-placeholder' : ''}>
+                        {triggerLabel}
+                      </span>
+                      <span className="trigger-arrow">▾</span>
+                    </button>
+
+                    {dropdownOpen && (
+                      <div className="multiselect-dropdown">
+                        {GROUPS.map(({ label, jiraName }) => {
+                          const isSelected    = selectedGroups.has(jiraName)
+                          const isExpanded    = expandedGroups.has(jiraName)
+                          const isLoadingMbr  = loadingGroups.has(jiraName)
+                          const members       = groupMembers[jiraName] ?? []
+                          const deselected    = deselectedMembers[jiraName] ?? new Set()
+                          const someDeselected = isSelected && deselected.size > 0
+                          const selectedCount  = isSelected ? members.length - deselected.size : 0
+                          return (
+                            <div key={jiraName}>
+                              <div className="dd-group-row">
+                                <button
+                                  className={`dd-expand-btn${isExpanded ? ' open' : ''}`}
+                                  onClick={() => toggleGroupExpanded(jiraName)}
+                                  aria-label={isExpanded ? '收合' : '展開成員'}
+                                >
+                                  {isExpanded && isLoadingMbr ? '…' : isExpanded ? '▾' : '▸'}
+                                </button>
+                                <GroupCheckbox
+                                  id={`group-dd-${jiraName}`}
+                                  checked={isSelected}
+                                  indeterminate={someDeselected}
+                                  onChange={() => toggleGroupSelected(jiraName)}
+                                />
+                                <label className="dd-group-label" htmlFor={`group-dd-${jiraName}`}>
+                                  {label}
+                                </label>
+                                {isSelected && members.length > 0 && (
+                                  <span className="dd-group-count">{selectedCount}</span>
+                                )}
+                              </div>
+
+                              {isExpanded && (
+                                isLoadingMbr ? (
+                                  <div className="dd-loading">載入中…</div>
+                                ) : members.map(m => {
+                                  const isChecked = isSelected && !deselected.has(m.accountId)
+                                  return (
+                                    <label
+                                      key={m.accountId}
+                                      className={`dd-member-row${!isSelected ? ' disabled' : ''}`}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        disabled={!isSelected}
+                                        onChange={() => isSelected && toggleMember(jiraName, m.accountId)}
+                                      />
+                                      <span>{m.displayName}</span>
+                                    </label>
+                                  )
+                                })
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+
+              <div className="team-search-row">
+                <button
+                  className="search-btn"
+                  onClick={searchTeam}
+                  disabled={loading || !teamQueryable}
+                >
+                  {loading ? '查詢中…' : '查詢'}
+                </button>
+              </div>
+            </>
           )}
         </div>
 
@@ -306,8 +589,18 @@ export default function App() {
         {data && (
           <div className="results">
             <div className="result-meta">
-              <span className="result-user">{data.user}</span>
-              <span className="result-range">近 {data.days} 天</span>
+              {data.mode === 'team' ? (
+                <>
+                  <span className="result-user">{data.groupLabels?.join(' · ')}</span>
+                  <span className="result-range">近 {data.days} 天</span>
+                  <span className="result-range">{data.membersList.length} 人</span>
+                </>
+              ) : (
+                <>
+                  <span className="result-user">{data.user}</span>
+                  <span className="result-range">近 {data.days} 天</span>
+                </>
+              )}
             </div>
 
             <div className="viz-toolbar">
@@ -335,7 +628,7 @@ export default function App() {
             </div>
 
             {data.total === 0 ? (
-              <div className="empty-msg">近 30 天無完成的 DEV-Task</div>
+              <div className="empty-msg">近 {data.days} 天無完成的 DEV-Task / QA-Task</div>
             ) : (
               <div className="viz-root">
                 <div className="chart-card">
@@ -422,11 +715,19 @@ export default function App() {
   )
 }
 
+function GroupCheckbox({ id, checked, indeterminate, onChange }) {
+  const ref = useRef()
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate
+  }, [indeterminate])
+  return <input type="checkbox" id={id} ref={ref} checked={checked} onChange={onChange} />
+}
+
 function MissingSpModal({ issues, fieldIds, onClose, onUpdated }) {
   const jiraBase = 'https://kkvideo.atlassian.net'
   const { spId, storyPointsId } = fieldIds
-  const [edits, setEdits] = useState({})
-  const [updating, setUpdating] = useState(false)
+  const [edits, setEdits]             = useState({})
+  const [updating, setUpdating]       = useState(false)
   const [updateError, setUpdateError] = useState(null)
 
   const hasValidEdit = Object.values(edits).some(edit => {
@@ -461,10 +762,7 @@ function MissingSpModal({ issues, fieldIds, onClose, onUpdated }) {
           }
         }
       }
-      if (errors.length > 0) {
-        setUpdateError(errors.join('\n'))
-        return
-      }
+      if (errors.length > 0) { setUpdateError(errors.join('\n')); return }
       onUpdated()
     } catch (e) {
       setUpdateError(e.message)
@@ -489,9 +787,7 @@ function MissingSpModal({ issues, fieldIds, onClose, onUpdated }) {
             <tbody>
               {issues.map(issue => (
                 <tr key={issue.key}>
-                  <td className="icon-cell">
-                    <IssueTypeIcon type={issue.parentType} />
-                  </td>
+                  <td className="icon-cell"><IssueTypeIcon type={issue.parentType} /></td>
                   <td>
                     <a href={`${jiraBase}/browse/${issue.key}`} target="_blank" rel="noreferrer" className="ticket-link">
                       {issue.key}
