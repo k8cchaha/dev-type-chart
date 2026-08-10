@@ -236,6 +236,36 @@ body {
   padding: .1875rem .5rem;
   border-radius: 99px;
 }
+.result-member-count {
+  position: relative;
+  cursor: zoom-in;
+}
+.result-member-count::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 6px);
+  transform: translateY(-50%);
+  background: var(--surface-1);
+  color: var(--text-1);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 8px rgba(11,11,11,.1);
+  padding: .3rem .55rem;
+  border-radius: 5px;
+  font-size: .75rem;
+  line-height: 1.5;
+  width: max-content;
+  max-width: 320px;
+  white-space: normal;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  z-index: 100;
+}
+.result-member-count:hover::after {
+  opacity: 1;
+  visibility: visible;
+}
 
 /* ── Viz toolbar ─────────────────────────────────────────────────────────── */
 .viz-toolbar {

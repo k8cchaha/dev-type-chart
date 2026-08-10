@@ -199,7 +199,7 @@ const STORAGE_KEY = 'devtype_remember_name'
 
 export default function App() {
   // Shared
-  const [mode, setMode]           = useState('individual')
+  const [mode, setMode]           = useState(() => localStorage.getItem('devChart_mode') || 'individual')
   const [daysInput, setDaysInput] = useState('30')
   const days = Math.max(1, parseInt(daysInput) || 30)
   const [viewMode, setViewMode]   = useState('count')
@@ -215,10 +215,19 @@ export default function App() {
   const [candidates, setCandidates] = useState([])
 
   // Team mode
-  const [selectedGroups, setSelectedGroups]       = useState(new Set())
+  const [selectedGroups, setSelectedGroups]       = useState(() => {
+    try { const s = localStorage.getItem('devChart_selectedGroups'); return s ? new Set(JSON.parse(s)) : new Set() }
+    catch { return new Set() }
+  })
   const [expandedGroups, setExpandedGroups]       = useState(new Set())
   const [groupMembers, setGroupMembers]           = useState({})
-  const [deselectedMembers, setDeselectedMembers] = useState({})
+  const [deselectedMembers, setDeselectedMembers] = useState(() => {
+    try {
+      const s = localStorage.getItem('devChart_deselectedMembers')
+      if (!s) return {}
+      return Object.fromEntries(Object.entries(JSON.parse(s)).map(([k, v]) => [k, new Set(v)]))
+    } catch { return {} }
+  })
   const [loadingGroups, setLoadingGroups]         = useState(new Set())
   const [dropdownOpen, setDropdownOpen]           = useState(false)
   const dropdownRef = useRef()
@@ -279,6 +288,20 @@ export default function App() {
     document.addEventListener('mousedown', onMouseDown)
     return () => document.removeEventListener('mousedown', onMouseDown)
   }, [dropdownOpen])
+
+  useEffect(() => { localStorage.setItem('devChart_mode', mode) }, [mode])
+  useEffect(() => {
+    localStorage.setItem('devChart_selectedGroups', JSON.stringify([...selectedGroups]))
+  }, [selectedGroups])
+  useEffect(() => {
+    const obj = Object.fromEntries(Object.entries(deselectedMembers).map(([k, v]) => [k, [...v]]))
+    localStorage.setItem('devChart_deselectedMembers', JSON.stringify(obj))
+  }, [deselectedMembers])
+
+  // Auto-load members for groups restored from localStorage
+  useEffect(() => {
+    selectedGroups.forEach(jiraName => loadGroupMembers(jiraName))
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   function toggleMember(jiraName, accountId) {
     const members = groupMembers[jiraName] ?? []
@@ -594,7 +617,10 @@ export default function App() {
                 <>
                   <span className="result-user">{data.groupLabels?.join(' · ')}</span>
                   <span className="result-range">近 {data.days} 天</span>
-                  <span className="result-range">{data.membersList.length} 人</span>
+                  <span
+                    className="result-range result-member-count"
+                    data-tooltip={data.membersList.map(m => m.displayName).join(', ')}
+                  >{data.membersList.length} 人</span>
                 </>
               ) : (
                 <>
