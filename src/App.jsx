@@ -156,6 +156,7 @@ async function fetchTasksForUser({ accountId, displayName }, days) {
       sp:         storyPointsId ? (issue.fields?.[storyPointsId] ?? null) : null,
       actualSp:   spId          ? (issue.fields?.[spId]          ?? null) : null,
       parentType: issue.fields?.parent?.fields?.issuetype?.name ?? null,
+      assignee:   displayName,
     }))
 
   return {
@@ -709,7 +710,7 @@ export default function App() {
       )}
 
       {showMissingModal && data && (
-        <MissingSpModal issues={data.missingSpIssues} fieldIds={data.fieldIds} onClose={() => setShowMissingModal(false)} onUpdated={handleUpdated} />
+        <MissingSpModal issues={data.missingSpIssues} fieldIds={data.fieldIds} isTeam={data.mode === 'team'} onClose={() => setShowMissingModal(false)} onUpdated={handleUpdated} />
       )}
     </div>
   )
@@ -723,7 +724,7 @@ function GroupCheckbox({ id, checked, indeterminate, onChange }) {
   return <input type="checkbox" id={id} ref={ref} checked={checked} onChange={onChange} />
 }
 
-function MissingSpModal({ issues, fieldIds, onClose, onUpdated }) {
+function MissingSpModal({ issues, fieldIds, isTeam, onClose, onUpdated }) {
   const jiraBase = 'https://kkvideo.atlassian.net'
   const { spId, storyPointsId } = fieldIds
   const [edits, setEdits]             = useState({})
@@ -782,7 +783,14 @@ function MissingSpModal({ issues, fieldIds, onClose, onUpdated }) {
           {updateError && <div className="modal-error">{updateError}</div>}
           <table className="missing-table">
             <thead>
-              <tr><th></th><th>Ticket</th><th>Summary</th><th>SP</th><th>Actual SP</th></tr>
+              <tr>
+                <th></th>
+                <th>Ticket</th>
+                {isTeam && <th>Assignee</th>}
+                <th>Summary</th>
+                <th>SP</th>
+                <th>Actual SP</th>
+              </tr>
             </thead>
             <tbody>
               {issues.map(issue => (
@@ -793,6 +801,7 @@ function MissingSpModal({ issues, fieldIds, onClose, onUpdated }) {
                       {issue.key}
                     </a>
                   </td>
+                  {isTeam && <td className="assignee-cell">{issue.assignee}</td>}
                   <td className="summary-cell">{issue.summary}</td>
                   <td>
                     {!storyPointsId

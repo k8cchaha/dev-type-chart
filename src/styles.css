@@ -402,6 +402,7 @@ body {
 .ticket-link { color: var(--other); text-decoration: none; font-weight: 500; white-space: nowrap; }
 .ticket-link:hover { text-decoration: underline; }
 .summary-cell { color: var(--text-1); }
+.assignee-cell { color: var(--text-2); white-space: nowrap; font-size: .8125rem; }
 .sp-na     { color: var(--text-muted); }
 .sp-filled { color: var(--text-2); font-variant-numeric: tabular-nums; }
 .icon-cell { width: 24px; padding-right: 0 !important; text-align: center; }
